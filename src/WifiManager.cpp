@@ -10,4 +10,7 @@ void WifiManager::startAccessPoint()
         "Ampercore_Setup",
         "ampercore123"
     );
+
+    Serial.print("AP IP: ");
+    Serial.println(WiFi.softAPIP());
 }
