@@ -5,7 +5,9 @@
 #include "WebPortal.h"
 #include "ApiServer.h"
 #include "MQTTManager.h"
+#include "DeviceManager.h"
 
+DeviceManager deviceManager;
 WifiManager wifiManager;
 ConfigManager configManager;
 WebPortal webPortal;

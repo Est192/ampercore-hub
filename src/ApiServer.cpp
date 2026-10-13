@@ -7,11 +7,12 @@
 #include "ConfigManager.h"
 #include "WebPortal.h"
 #include "MQTTManager.h"
+#include "DeviceManager.h"
 
+extern DeviceManager deviceManager;
 extern AsyncWebServer server;
 extern ConfigManager configManager;
 extern MQTTManager mqttManager;
-
 extern String cachedNetworks;
 extern std::vector<String> scannedNetworks;
 
@@ -223,6 +224,19 @@ void ApiServer::begin()
             delay(500);
 
             ESP.restart();
+        }
+    );
+
+    server.on(
+        "/api/devices",
+        HTTP_GET,
+        [](AsyncWebServerRequest *request)
+        {
+            request->send(
+                200,
+                "application/json",
+                deviceManager.getDevicesJson()
+            );
         }
     );
 

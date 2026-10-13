@@ -3,6 +3,13 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include "DeviceManager.h"
+
+extern DeviceManager deviceManager;
+
+void processDiscoveryMessage(
+    const String& payload
+);
 
 class MQTTManager
 {

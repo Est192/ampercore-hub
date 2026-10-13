@@ -1,4 +1,8 @@
 #include "MQTTManager.h"
+#include <ArduinoJson.h>
+#include "DeviceManager.h"
+
+extern DeviceManager deviceManager;
 
 MQTTManager::MQTTManager()
     : mqttClient(wifiClient)
@@ -148,9 +152,104 @@ void MQTTManager::callback(
     }
 
     Serial.println();
-    Serial.print("TOPIC: ");
-    Serial.println(topic);
+    Serial.print(
+        "TOPIC: "
+    );
 
-    Serial.print("PAYLOAD: ");
-    Serial.println(message);
+    Serial.println(
+        topic
+    );
+
+    Serial.print(
+        "PAYLOAD: "
+    );
+
+    Serial.println(
+        message
+    );
+
+    if(
+        String(topic) ==
+        "ampercore/discovery"
+    )
+    {
+        JsonDocument doc;
+
+        if(
+            deserializeJson(
+                doc,
+                message
+            ) ==
+            DeserializationError::Ok
+        )
+        {
+            Device device;
+
+            device.id =
+                doc["id"]
+                .as<String>();
+
+            device.name =
+                doc["name"]
+                .as<String>();
+
+            device.type =
+                doc["type"]
+                .as<String>();
+
+            device.state =
+                "online";
+
+            deviceManager.addDevice(
+                device
+            );
+
+            Serial.println(
+                "Dispositivo descubierto"
+            );
+        }
+    }
+}
+
+void processDiscoveryMessage(
+    const String& payload
+)
+{
+    JsonDocument doc;
+
+    DeserializationError error =
+        deserializeJson(
+            doc,
+            payload
+        );
+
+    if(error)
+    {
+        Serial.println(
+            "JSON invalido"
+        );
+
+        return;
+    }
+
+    Device device;
+
+    device.id =
+        doc["id"]
+        .as<String>();
+
+    device.name =
+        doc["name"]
+        .as<String>();
+
+    device.type =
+        doc["type"]
+        .as<String>();
+
+    device.state =
+        "online";
+
+    deviceManager.addDevice(
+        device
+    );
 }

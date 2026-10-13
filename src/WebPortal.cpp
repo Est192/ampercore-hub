@@ -1,11 +1,13 @@
 #include "WebPortal.h"
 #include "ConfigManager.h"
 #include "MQTTManager.h"
+#include "DeviceManager.h"
 
 #include <WiFi.h>
 
 extern ConfigManager configManager;
 extern MQTTManager mqttManager;
+extern DeviceManager deviceManager;
 
 AsyncWebServer server(80);
 
@@ -215,6 +217,21 @@ broker.hivemq.com
 
 <div class="card">
 
+<h2>Dispositivos</h2>
+
+<p>
+<strong>Registrados:</strong>
+DEVICE_COUNT
+</p>
+
+<p>
+Descubiertos mediante MQTT
+</p>
+
+</div>
+
+<div class="card">
+
 <h2>Configuración WiFi</h2>
 
 <form action="/save" method="GET">
@@ -274,6 +291,7 @@ broker.hivemq.com
 <li>/api/networks</li>
 <li>/api/device</li>
 <li>/api/mqtt</li>
+<li>/api/devices</li>
 <li>/api/reboot</li>
 <li>/api/reset</li>
 </ul>
@@ -328,6 +346,13 @@ broker.hivemq.com
                 mqttManager.isConnected()
                     ? "Conectado"
                     : "Desconectado"
+            );
+
+            html.replace(
+                "DEVICE_COUNT",
+                String(
+                    deviceManager.count()
+                )
             );
 
             request->send(
