@@ -3,13 +3,7 @@
 #include <Arduino.h>
 #include <vector>
 
-struct Device
-{
-    String id;
-    String name;
-    String type;
-    String state;
-};
+#include "Device.h"
 
 class DeviceManager
 {
@@ -31,9 +25,18 @@ public:
         const String& id
     );
 
+    bool updateTelemetry(
+        const String& id,
+        const Telemetry& telemetry
+    );
+
     int count();
 
     String getDevicesJson();
+
+    String getDeviceJson(
+        const String& id
+    );
 
 private:
 

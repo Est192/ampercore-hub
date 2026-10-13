@@ -4,18 +4,12 @@ void DeviceManager::addDevice(
     const Device& device
 )
 {
-    if(
-        deviceExists(
-            device.id
-        )
-    )
+    if(deviceExists(device.id))
     {
         return;
     }
 
-    devices.push_back(
-        device
-    );
+    devices.push_back(device);
 
     Serial.print(
         "Dispositivo registrado: "
@@ -30,10 +24,7 @@ bool DeviceManager::deviceExists(
     const String& id
 )
 {
-    for(
-        auto& device :
-        devices
-    )
+    for(auto& device : devices)
     {
         if(device.id == id)
         {
@@ -57,6 +48,7 @@ bool DeviceManager::removeDevice(
         if(it->id == id)
         {
             devices.erase(it);
+
             return true;
         }
     }
@@ -69,17 +61,50 @@ Device* DeviceManager::findDevice(
 )
 {
     for(
-        auto& device :
-        devices
+        size_t i = 0;
+        i < devices.size();
+        ++i
     )
     {
-        if(device.id == id)
+        if(devices[i].id == id)
         {
-            return &device;
+            return &devices[i];
         }
     }
 
     return nullptr;
+}
+
+bool DeviceManager::updateTelemetry(
+    const String& id,
+    const Telemetry& telemetry
+)
+{
+    Device* device =
+        findDevice(id);
+
+    if(device == nullptr)
+    {
+        Serial.print(
+            "updateTelemetry() failed: device not found -> "
+        );
+        Serial.println(
+            id
+        );
+        return false;
+    }
+
+    device->telemetry =
+        telemetry;
+
+    Serial.print(
+        "Telemetry saved for device "
+    );
+    Serial.println(
+        id
+    );
+
+    return true;
 }
 
 int DeviceManager::count()
@@ -90,18 +115,13 @@ int DeviceManager::count()
 String DeviceManager::getDevicesJson()
 {
     String json =
-        "{"
-        "\"count\":" +
-        String(
-            devices.size()
-        ) +
+        "{\"count\":" +
+        String(devices.size()) +
         ",\"devices\":[";
 
-    for(
-        size_t i = 0;
+    for(size_t i = 0;
         i < devices.size();
-        i++
-    )
+        i++)
     {
         json +=
             "{"
@@ -119,16 +139,68 @@ String DeviceManager::getDevicesJson()
             "\""
             "}";
 
-        if(
-            i <
-            devices.size() - 1
-        )
+        if(i < devices.size() - 1)
         {
             json += ",";
         }
     }
 
     json += "]}";
+
+    return json;
+}
+
+String DeviceManager::getDeviceJson(
+    const String& id
+)
+{
+    Device* device =
+        findDevice(id);
+
+    if(device == nullptr)
+    {
+        return "{}";
+    }
+
+    String json = "{";
+
+    json +=
+        "\"id\":\"" +
+        device->id +
+        "\"";
+
+    json +=
+        ",\"name\":\"" +
+        device->name +
+        "\"";
+
+    json +=
+        ",\"type\":\"" +
+        device->type +
+        "\"";
+
+    json +=
+        ",\"state\":\"" +
+        device->state +
+        "\"";
+
+    json +=
+        ",\"voltage\":" +
+        String(device->telemetry.voltage);
+
+    json +=
+        ",\"current\":" +
+        String(device->telemetry.current);
+
+    json +=
+        ",\"power\":" +
+        String(device->telemetry.power);
+
+    json +=
+        ",\"energy\":" +
+        String(device->telemetry.energy);
+
+    json += "}";
 
     return json;
 }

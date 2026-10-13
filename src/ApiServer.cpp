@@ -240,6 +240,71 @@ void ApiServer::begin()
         }
     );
 
+    server.on(
+        "/api/device",
+        HTTP_GET,
+        [](AsyncWebServerRequest *request)
+        {
+            String id = "";
+
+            if(
+                request->hasParam(
+                    "id"
+                )
+            )
+            {
+                id =
+                    request->getParam(
+                        "id"
+                    )->value();
+            }
+
+            request->send(
+                200,
+                "application/json",
+                deviceManager.getDeviceJson(
+                    id
+                )
+            );
+        }
+    );
+
+    server.on(
+        "/api/deviceinfo",
+        HTTP_GET,
+        [](AsyncWebServerRequest *request)
+        {
+            if(
+                !request->hasParam(
+                    "id"
+                )
+            )
+            {
+                request->send(
+                    400,
+                    "application/json",
+                    "{\"error\":\"missing id\"}"
+                );
+
+                return;
+            }
+
+            String id =
+                request
+                    ->getParam("id")
+                    ->value();
+
+            request->send(
+                200,
+                "application/json",
+                deviceManager.getDeviceJson(
+                    id
+                )
+            );
+        }
+    );
+
+
     Serial.println(
         "API Server iniciado"
     );

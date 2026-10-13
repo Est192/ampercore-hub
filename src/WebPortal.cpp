@@ -232,6 +232,16 @@ Descubiertos mediante MQTT
 
 <div class="card">
 
+<h2>Telemetría</h2>
+
+<p>
+Próximamente disponible
+</p>
+
+</div>
+
+<div class="card">
+
 <h2>Configuración WiFi</h2>
 
 <form action="/save" method="GET">

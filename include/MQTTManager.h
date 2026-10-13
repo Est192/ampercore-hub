@@ -34,11 +34,18 @@ public:
         const String& topic
     );
 
+    void processTelemetryMessage(
+        const String& topic,
+        const String& payload
+    );
+
     String getBroker();
 
     int getPort();
 
 private:
+
+    static MQTTManager* instance;
 
     WiFiClient wifiClient;
 
@@ -57,5 +64,15 @@ private:
         char* topic,
         byte* payload,
         unsigned int length
+    );
+
+    void handleIncomingMessage(
+        char* topic,
+        byte* payload,
+        unsigned int length
+    );
+
+    static String extractDeviceIdFromTopic(
+        const String& topic
     );
 };

@@ -1,12 +1,16 @@
 #include "MQTTManager.h"
 #include <ArduinoJson.h>
 #include "DeviceManager.h"
+#include "Telemetry.h"
 
 extern DeviceManager deviceManager;
+
+MQTTManager* MQTTManager::instance = nullptr;
 
 MQTTManager::MQTTManager()
     : mqttClient(wifiClient)
 {
+    instance = this;
 }
 
 void MQTTManager::begin()
@@ -59,6 +63,10 @@ bool MQTTManager::connect()
 
         mqttClient.subscribe(
             "ampercore/discovery"
+        );
+
+        mqttClient.subscribe(
+            "ampercore/device/#"
         );
     }
     else
@@ -133,13 +141,161 @@ int MQTTManager::getPort()
     return port;
 }
 
-void MQTTManager::callback(
+String MQTTManager::extractDeviceIdFromTopic(
+    const String& topic
+)
+{
+    const String prefix =
+        "ampercore/device/";
+
+    const String suffix =
+        "/telemetry";
+
+    if(
+        !topic.startsWith(prefix) ||
+        !topic.endsWith(suffix)
+    )
+    {
+        return "";
+    }
+
+    return topic.substring(
+        prefix.length(),
+        topic.length() - suffix.length()
+    );
+}
+
+void MQTTManager::processTelemetryMessage(
+    const String& topic,
+    const String& payload
+)
+{
+    Serial.println(
+        "--- Telemetry Processing ---"
+    );
+    Serial.print(
+        "Received topic: "
+    );
+    Serial.println(
+        topic
+    );
+    Serial.print(
+        "Received payload: "
+    );
+    Serial.println(
+        payload
+    );
+
+    JsonDocument doc;
+    DeserializationError error =
+        deserializeJson(
+            doc,
+            payload
+        );
+
+    Serial.print(
+        "deserializeJson() result: "
+    );
+    Serial.println(
+        error.c_str()
+    );
+
+    if(error != DeserializationError::Ok)
+    {
+        return;
+    }
+
+    String deviceId =
+        extractDeviceIdFromTopic(
+            topic
+        );
+
+    Serial.print(
+        "Extracted DeviceId: "
+    );
+    Serial.println(
+        deviceId
+    );
+
+    if(deviceId.length() == 0)
+    {
+        Serial.println(
+            "Topic does not match ampercore/device/<id>/telemetry"
+        );
+        return;
+    }
+
+    Device* device =
+        deviceManager.findDevice(
+            deviceId
+        );
+
+    Serial.print(
+        "deviceManager.findDevice() result: "
+    );
+    Serial.println(
+        device != nullptr
+            ? "FOUND"
+            : "NOT FOUND"
+    );
+
+    if(device == nullptr)
+    {
+        return;
+    }
+
+    Serial.printf(
+        "Telemetry before update: V=%.2f C=%.2f P=%.2f E=%.2f\n",
+        device->telemetry.voltage,
+        device->telemetry.current,
+        device->telemetry.power,
+        device->telemetry.energy
+    );
+
+    Telemetry telemetry;
+    telemetry.voltage =
+        doc["voltage"] | 0.0f;
+    telemetry.current =
+        doc["current"] | 0.0f;
+    telemetry.power =
+        doc["power"] | 0.0f;
+    telemetry.energy =
+        doc["energy"] | 0.0f;
+    telemetry.timestamp =
+        millis();
+
+    bool updated =
+        deviceManager.updateTelemetry(
+            deviceId,
+            telemetry
+        );
+
+    Serial.print(
+        "updateTelemetry() result: "
+    );
+    Serial.println(
+        updated ? "true" : "false"
+    );
+
+    Serial.printf(
+        "Telemetry after update: V=%.2f C=%.2f P=%.2f E=%.2f\n",
+        device->telemetry.voltage,
+        device->telemetry.current,
+        device->telemetry.power,
+        device->telemetry.energy
+    );
+}
+
+void MQTTManager::handleIncomingMessage(
     char* topic,
     byte* payload,
     unsigned int length
 )
 {
-    String message;
+    String topicStr =
+        String(topic);
+
+    String message = "";
 
     for(
         unsigned int i = 0;
@@ -155,33 +311,37 @@ void MQTTManager::callback(
     Serial.print(
         "TOPIC: "
     );
-
     Serial.println(
-        topic
+        topicStr
     );
-
     Serial.print(
         "PAYLOAD: "
     );
-
     Serial.println(
         message
     );
 
     if(
-        String(topic) ==
+        topicStr ==
         "ampercore/discovery"
     )
     {
         JsonDocument doc;
 
-        if(
+        DeserializationError error =
             deserializeJson(
                 doc,
                 message
-            ) ==
-            DeserializationError::Ok
-        )
+            );
+
+        Serial.print(
+            "Discovery deserializeJson() result: "
+        );
+        Serial.println(
+            error.c_str()
+        );
+
+        if(error == DeserializationError::Ok)
         {
             Device device;
 
@@ -208,7 +368,42 @@ void MQTTManager::callback(
                 "Dispositivo descubierto"
             );
         }
+
+        return;
     }
+
+    if(
+        topicStr.startsWith(
+            "ampercore/device/"
+        ) &&
+        topicStr.endsWith(
+            "/telemetry"
+        )
+    )
+    {
+        processTelemetryMessage(
+            topicStr,
+            message
+        );
+    }
+}
+
+void MQTTManager::callback(
+    char* topic,
+    byte* payload,
+    unsigned int length
+)
+{
+    if(instance == nullptr)
+    {
+        return;
+    }
+
+    instance->handleIncomingMessage(
+        topic,
+        payload,
+        length
+    );
 }
 
 void processDiscoveryMessage(
