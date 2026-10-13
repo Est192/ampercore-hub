@@ -1,17 +1,21 @@
 #include "WebPortal.h"
 #include "ConfigManager.h"
+#include "MQTTManager.h"
 
 #include <WiFi.h>
 
 extern ConfigManager configManager;
+extern MQTTManager mqttManager;
 
 AsyncWebServer server(80);
+
 String cachedNetworks = "";
 std::vector<String> scannedNetworks;
 
 void scanNetworks()
 {
     scannedNetworks.clear();
+
     Serial.println("Escaneando redes...");
 
     String tempNetworks = "";
@@ -92,14 +96,14 @@ body{
 }
 
 h1{
-    color: #1976D2;
+    color:#1976D2;
 }
 
 .card{
-    border: 1px solid #ddd;
-    padding: 15px;
-    border-radius: 10px;
-    margin-bottom: 20px;
+    border:1px solid #ddd;
+    padding:15px;
+    border-radius:10px;
+    margin-bottom:20px;
 }
 
 label{
@@ -173,7 +177,7 @@ HUB_ID
 
 <p>
 <strong>Firmware:</strong>
-0.1.5
+0.2.0
 </p>
 
 <p>
@@ -184,6 +188,27 @@ HEAP_VALUE bytes
 <p>
 <strong>Tiempo Activo:</strong>
 UPTIME_VALUE segundos
+</p>
+
+</div>
+
+<div class="card">
+
+<h2>MQTT</h2>
+
+<p>
+<strong>Estado:</strong>
+MQTT_STATUS
+</p>
+
+<p>
+<strong>Broker:</strong>
+broker.hivemq.com
+</p>
+
+<p>
+<strong>Puerto:</strong>
+1883
 </p>
 
 </div>
@@ -201,6 +226,7 @@ UPTIME_VALUE segundos
 </select>
 
 <label>Contraseña</label>
+
 <input
     type="password"
     name="password"
@@ -247,6 +273,7 @@ UPTIME_VALUE segundos
 <li>/api/config</li>
 <li>/api/networks</li>
 <li>/api/device</li>
+<li>/api/mqtt</li>
 <li>/api/reboot</li>
 <li>/api/reset</li>
 </ul>
@@ -294,6 +321,13 @@ UPTIME_VALUE segundos
                 String(
                     millis() / 1000
                 )
+            );
+
+            html.replace(
+                "MQTT_STATUS",
+                mqttManager.isConnected()
+                    ? "Conectado"
+                    : "Desconectado"
             );
 
             request->send(
@@ -357,9 +391,9 @@ UPTIME_VALUE segundos
             );
 
             request->send(
-    200,
-    "text/html",
-    R"rawliteral(
+                200,
+                "text/html",
+                R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
@@ -378,11 +412,11 @@ Reiniciando dispositivo...
 </body>
 </html>
 )rawliteral"
-);
+            );
 
-delay(1000);
+            delay(1000);
 
-ESP.restart();
+            ESP.restart();
         });
 
     server.begin();

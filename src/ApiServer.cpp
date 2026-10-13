@@ -6,11 +6,14 @@
 
 #include "ConfigManager.h"
 #include "WebPortal.h"
+#include "MQTTManager.h"
 
-extern std::vector<String> scannedNetworks;
 extern AsyncWebServer server;
 extern ConfigManager configManager;
+extern MQTTManager mqttManager;
+
 extern String cachedNetworks;
+extern std::vector<String> scannedNetworks;
 
 void ApiServer::begin()
 {
@@ -80,7 +83,7 @@ void ApiServer::begin()
             json +=
                 ",\"networks\":[";
 
-            for(
+            for (
                 size_t i = 0;
                 i < scannedNetworks.size();
                 i++
@@ -91,7 +94,7 @@ void ApiServer::begin()
                     scannedNetworks[i] +
                     "\"";
 
-                if(
+                if (
                     i <
                     scannedNetworks.size() - 1
                 )
@@ -121,7 +124,9 @@ void ApiServer::begin()
             String hubId =
                 "AMP-HUB-" +
                 String(
-                    (uint32_t)(chipid >> 24),
+                    (uint32_t)(
+                        chipid >> 24
+                    ),
                     HEX
                 );
 
@@ -142,6 +147,40 @@ void ApiServer::begin()
                     millis() / 1000
                 ) +
                 "}";
+
+            request->send(
+                200,
+                "application/json",
+                json
+            );
+        }
+    );
+
+    server.on(
+        "/api/mqtt",
+        HTTP_GET,
+        [](AsyncWebServerRequest *request)
+        {
+            String json = "{";
+
+            json += "\"connected\":";
+            json +=
+                mqttManager.isConnected()
+                    ? "true"
+                    : "false";
+
+            json +=
+                ",\"broker\":\"" +
+                mqttManager.getBroker() +
+                "\"";
+
+            json +=
+                ",\"port\":" +
+                String(
+                    mqttManager.getPort()
+                );
+
+            json += "}";
 
             request->send(
                 200,

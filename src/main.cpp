@@ -1,17 +1,19 @@
 #include <Arduino.h>
 #include <WiFi.h>
-
 #include "WifiManager.h"
 #include "ConfigManager.h"
 #include "WebPortal.h"
 #include "ApiServer.h"
+#include "MQTTManager.h"
 
 WifiManager wifiManager;
 ConfigManager configManager;
 WebPortal webPortal;
 ApiServer apiServer;
-
+MQTTManager mqttManager;
 TaskHandle_t wifiScanTaskHandle = NULL;
+
+unsigned long lastHeartbeat = 0;
 
 void wifiScanTask(void * parameter)
 {
@@ -40,7 +42,7 @@ void setup()
         "AMPERCORE HUB"
     );
     Serial.println(
-        "Version 0.1.4"
+        "Version 0.2.0"
     );
     Serial.println(
         "================================"
@@ -115,6 +117,13 @@ void setup()
 
     apiServer.begin();
 
+      if(wifiConnected)
+      {
+          mqttManager.begin();
+
+          mqttManager.connect();
+      }
+
     Serial.println();
 
     if(wifiConnected)
@@ -153,6 +162,37 @@ void setup()
 
 void loop()
 {
+  mqttManager.loop();
+
+  if(
+    millis() - lastHeartbeat >
+    30000
+    )
+    {
+        lastHeartbeat = millis();
+
+        String payload =
+            "{"
+            "\"heap\":" +
+            String(
+                ESP.getFreeHeap()
+            ) +
+            ",\"uptime\":" +
+            String(
+                millis()/1000
+            ) +
+            "}";
+
+        mqttManager.publish(
+            "ampercore/hub/heartbeat",
+            payload
+        );
+
+        Serial.println(
+            "Heartbeat MQTT enviado"
+        );
+    }
+
     if(
         !wifiManager.isAPMode()
         &&
