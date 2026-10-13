@@ -1,0 +1,21 @@
+
+# Ampercore Hub
+
+Firmware del gateway IoT de Ampercore.
+
+## Objetivos
+
+- Gestión energética residencial
+- Portal cautivo de configuración
+- MQTT
+- API REST local
+- Simulación de dispositivos inteligentes
+- Integración ESP32
+
+## Hardware
+
+- ESP32 Dev Module
+
+## Estado
+
+Versión inicial funcionando en PlatformIO.
