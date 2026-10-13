@@ -18,8 +18,12 @@ public:
     );
 
     String getSSID();
+
     String getPassword();
+
     String getHubName();
 
     bool isConfigured();
+
+    void clear();
 };

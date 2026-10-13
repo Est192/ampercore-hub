@@ -14,19 +14,36 @@ void ConfigManager::saveWifi(
     const String& hubName
 )
 {
-    preferences.putString("ssid", ssid);
-    preferences.putString("pass", password);
-    preferences.putString("hub", hubName);
+    preferences.putString(
+        "ssid",
+        ssid
+    );
+
+    preferences.putString(
+        "pass",
+        password
+    );
+
+    preferences.putString(
+        "hub",
+        hubName
+    );
 }
 
 String ConfigManager::getSSID()
 {
-    return preferences.getString("ssid", "");
+    return preferences.getString(
+        "ssid",
+        ""
+    );
 }
 
 String ConfigManager::getPassword()
 {
-    return preferences.getString("pass", "");
+    return preferences.getString(
+        "pass",
+        ""
+    );
 }
 
 String ConfigManager::getHubName()
@@ -40,4 +57,9 @@ String ConfigManager::getHubName()
 bool ConfigManager::isConfigured()
 {
     return getSSID().length() > 0;
+}
+
+void ConfigManager::clear()
+{
+    preferences.clear();
 }

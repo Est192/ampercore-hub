@@ -6,11 +6,12 @@
 extern ConfigManager configManager;
 
 AsyncWebServer server(80);
-
 String cachedNetworks = "";
+std::vector<String> scannedNetworks;
 
 void scanNetworks()
 {
+    scannedNetworks.clear();
     Serial.println("Escaneando redes...");
 
     String tempNetworks = "";
@@ -25,6 +26,10 @@ void scanNetworks()
     for (int i = 0; i < count; i++)
     {
         String ssid = WiFi.SSID(i);
+
+        scannedNetworks.push_back(
+            ssid
+        );
 
         tempNetworks +=
             "<option value=\"" +
@@ -56,6 +61,16 @@ void WebPortal::begin()
                 "Pagina principal solicitada"
             );
 
+            uint64_t chipid =
+                ESP.getEfuseMac();
+
+            String hubId =
+                "AMP-HUB-" +
+                String(
+                    (uint32_t)(chipid >> 24),
+                    HEX
+                );
+
             String html = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -70,21 +85,21 @@ void WebPortal::begin()
 <style>
 
 body{
-    font-family:Arial,sans-serif;
-    max-width:700px;
-    margin:auto;
-    padding:20px;
+    font-family: Arial, sans-serif;
+    max-width: 700px;
+    margin: auto;
+    padding: 20px;
 }
 
 h1{
-    color:#1976D2;
+    color: #1976D2;
 }
 
 .card{
-    border:1px solid #ddd;
-    padding:15px;
-    border-radius:10px;
-    margin-bottom:20px;
+    border: 1px solid #ddd;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 20px;
 }
 
 label{
@@ -95,9 +110,9 @@ label{
 select,input{
     width:100%;
     padding:10px;
-    box-sizing:border-box;
     margin-top:5px;
     margin-bottom:10px;
+    box-sizing:border-box;
 }
 
 button{
@@ -116,10 +131,6 @@ button{
 
 .scan-btn{
     background:#388E3C;
-}
-
-.api-btn{
-    background:#F57C00;
 }
 
 </style>
@@ -147,6 +158,32 @@ HUB_IP
 <p>
 <strong>Nombre:</strong>
 HUB_NAME
+</p>
+
+</div>
+
+<div class="card">
+
+<h2>Información del Dispositivo</h2>
+
+<p>
+<strong>Hub ID:</strong>
+HUB_ID
+</p>
+
+<p>
+<strong>Firmware:</strong>
+0.1.5
+</p>
+
+<p>
+<strong>Heap Libre:</strong>
+HEAP_VALUE bytes
+</p>
+
+<p>
+<strong>Tiempo Activo:</strong>
+UPTIME_VALUE segundos
 </p>
 
 </div>
@@ -190,11 +227,13 @@ HUB_NAME
 <div class="card">
 
 <a href="/scan">
+
 <button
     class="scan-btn"
     type="button">
     Actualizar Redes
 </button>
+
 </a>
 
 </div>
@@ -206,7 +245,10 @@ HUB_NAME
 <ul>
 <li>/api/status</li>
 <li>/api/config</li>
+<li>/api/networks</li>
+<li>/api/device</li>
 <li>/api/reboot</li>
+<li>/api/reset</li>
 </ul>
 
 </div>
@@ -233,6 +275,25 @@ HUB_NAME
             html.replace(
                 "HUB_IP",
                 WiFi.localIP().toString()
+            );
+
+            html.replace(
+                "HUB_ID",
+                hubId
+            );
+
+            html.replace(
+                "HEAP_VALUE",
+                String(
+                    ESP.getFreeHeap()
+                )
+            );
+
+            html.replace(
+                "UPTIME_VALUE",
+                String(
+                    millis() / 1000
+                )
             );
 
             request->send(
@@ -266,22 +327,28 @@ HUB_NAME
             String hub = "";
 
             if(request->hasParam("ssid"))
+            {
                 ssid =
                     request->getParam(
                         "ssid"
                     )->value();
+            }
 
             if(request->hasParam("password"))
+            {
                 password =
                     request->getParam(
                         "password"
                     )->value();
+            }
 
             if(request->hasParam("hub"))
+            {
                 hub =
                     request->getParam(
                         "hub"
                     )->value();
+            }
 
             configManager.saveWifi(
                 ssid,
@@ -290,13 +357,14 @@ HUB_NAME
             );
 
             request->send(
-                200,
-                "text/html",
-                R"rawliteral(
+    200,
+    "text/html",
+    R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
+<title>Configuración Guardada</title>
 </head>
 
 <body>
@@ -310,11 +378,11 @@ Reiniciando dispositivo...
 </body>
 </html>
 )rawliteral"
-            );
+);
 
-            delay(2000);
+delay(1000);
 
-            ESP.restart();
+ESP.restart();
         });
 
     server.begin();

@@ -79,6 +79,14 @@ void setup()
                 configManager.getSSID(),
                 configManager.getPassword()
             );
+
+        if (wifiConnected)
+        {
+            Serial.println(
+                "Escaneo inicial de redes..."
+            );
+            scanNetworks();
+        }
     }
 
     if(!wifiConnected)
