@@ -2,17 +2,13 @@
 #include "ConfigManager.h"
 
 #include <WiFi.h>
-#include <ESPAsyncWebServer.h>
-
-AsyncWebServer server(80);
 
 extern ConfigManager configManager;
 
+AsyncWebServer server(80);
+
 String cachedNetworks = "";
 
-/*
- * Escaneo de redes WiFi
- */
 void scanNetworks()
 {
     Serial.println("Escaneando redes...");
@@ -43,7 +39,7 @@ void scanNetworks()
     if (tempNetworks.length() == 0)
     {
         tempNetworks =
-            "<option value=\"\">No se encontraron redes</option>";
+            "<option>No se encontraron redes</option>";
     }
 
     cachedNetworks = tempNetworks;
@@ -51,50 +47,57 @@ void scanNetworks()
 
 void WebPortal::begin()
 {
-    /*
-     * Pagina principal
-     */
     server.on(
         "/",
         HTTP_GET,
         [](AsyncWebServerRequest *request)
         {
-            Serial.println("Pagina principal solicitada");
+            Serial.println(
+                "Pagina principal solicitada"
+            );
 
             String html = R"rawliteral(
 <!DOCTYPE html>
 <html>
-
 <head>
+
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport"
+      content="width=device-width, initial-scale=1">
 
 <title>Ampercore Hub</title>
 
 <style>
 
 body{
-    font-family: Arial, sans-serif;
-    max-width: 600px;
-    margin: auto;
-    padding: 20px;
+    font-family:Arial,sans-serif;
+    max-width:700px;
+    margin:auto;
+    padding:20px;
 }
 
 h1{
     color:#1976D2;
 }
 
+.card{
+    border:1px solid #ddd;
+    padding:15px;
+    border-radius:10px;
+    margin-bottom:20px;
+}
+
 label{
     display:block;
-    margin-top:15px;
+    margin-top:10px;
 }
 
 select,input{
     width:100%;
     padding:10px;
-    margin-top:5px;
-    margin-bottom:15px;
     box-sizing:border-box;
+    margin-top:5px;
+    margin-bottom:10px;
 }
 
 button{
@@ -112,15 +115,45 @@ button{
 }
 
 .scan-btn{
-    background:#43A047;
+    background:#388E3C;
+}
+
+.api-btn{
+    background:#F57C00;
 }
 
 </style>
+
 </head>
 
 <body>
 
 <h1>Ampercore Hub</h1>
+
+<div class="card">
+
+<h2>Estado del Hub</h2>
+
+<p>
+<strong>WiFi conectado:</strong>
+WIFI_NAME
+</p>
+
+<p>
+<strong>IP:</strong>
+HUB_IP
+</p>
+
+<p>
+<strong>Nombre:</strong>
+HUB_NAME
+</p>
+
+</div>
+
+<div class="card">
+
+<h2>Configuración WiFi</h2>
 
 <form action="/save" method="GET">
 
@@ -131,7 +164,6 @@ button{
 </select>
 
 <label>Contraseña</label>
-
 <input
     type="password"
     name="password"
@@ -142,7 +174,7 @@ button{
 <input
     type="text"
     name="hub"
-    value="AmpercoreHub"
+    value="HUB_NAME"
     required>
 
 <button
@@ -153,7 +185,9 @@ button{
 
 </form>
 
-<br>
+</div>
+
+<div class="card">
 
 <a href="/scan">
 <button
@@ -162,6 +196,20 @@ button{
     Actualizar Redes
 </button>
 </a>
+
+</div>
+
+<div class="card">
+
+<h2>API REST</h2>
+
+<ul>
+<li>/api/status</li>
+<li>/api/config</li>
+<li>/api/reboot</li>
+</ul>
+
+</div>
 
 </body>
 </html>
@@ -172,17 +220,28 @@ button{
                 cachedNetworks
             );
 
+            html.replace(
+                "HUB_NAME",
+                configManager.getHubName()
+            );
+
+            html.replace(
+                "WIFI_NAME",
+                WiFi.SSID()
+            );
+
+            html.replace(
+                "HUB_IP",
+                WiFi.localIP().toString()
+            );
+
             request->send(
                 200,
                 "text/html",
                 html
             );
-        }
-    );
+        });
 
-    /*
-     * Actualizar redes
-     */
     server.on(
         "/scan",
         HTTP_GET,
@@ -195,12 +254,8 @@ button{
             scanNetworks();
 
             request->redirect("/");
-        }
-    );
+        });
 
-    /*
-     * Guardar configuracion
-     */
     server.on(
         "/save",
         HTTP_GET,
@@ -210,46 +265,23 @@ button{
             String password = "";
             String hub = "";
 
-            if (request->hasParam("ssid"))
-            {
+            if(request->hasParam("ssid"))
                 ssid =
-                    request
-                    ->getParam("ssid")
-                    ->value();
-            }
+                    request->getParam(
+                        "ssid"
+                    )->value();
 
-            if (request->hasParam("password"))
-            {
+            if(request->hasParam("password"))
                 password =
-                    request
-                    ->getParam("password")
-                    ->value();
-            }
+                    request->getParam(
+                        "password"
+                    )->value();
 
-            if (request->hasParam("hub"))
-            {
+            if(request->hasParam("hub"))
                 hub =
-                    request
-                    ->getParam("hub")
-                    ->value();
-            }
-
-            Serial.println();
-            Serial.println(
-                "===== CONFIG GUARDADA ====="
-            );
-
-            Serial.println(
-                "SSID: " + ssid
-            );
-
-            Serial.println(
-                "PASSWORD: " + password
-            );
-
-            Serial.println(
-                "HUB: " + hub
-            );
+                    request->getParam(
+                        "hub"
+                    )->value();
 
             configManager.saveWifi(
                 ssid,
@@ -265,14 +297,14 @@ button{
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Configuración Guardada</title>
 </head>
+
 <body>
 
 <h1>Configuración Guardada</h1>
 
 <p>
-El ESP32 se reiniciará automáticamente.
+Reiniciando dispositivo...
 </p>
 
 </body>
@@ -283,8 +315,7 @@ El ESP32 se reiniciará automáticamente.
             delay(2000);
 
             ESP.restart();
-        }
-    );
+        });
 
     server.begin();
 

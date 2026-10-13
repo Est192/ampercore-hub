@@ -2,23 +2,22 @@
 #include <WiFi.h>
 
 #include "WifiManager.h"
-#include "WebPortal.h"
 #include "ConfigManager.h"
+#include "WebPortal.h"
+#include "ApiServer.h"
 
 WifiManager wifiManager;
-WebPortal webPortal;
 ConfigManager configManager;
+WebPortal webPortal;
+ApiServer apiServer;
 
 TaskHandle_t wifiScanTaskHandle = NULL;
 
-/*
- * Tarea de escaneo WiFi
- */
-void wifiScanTask(void *parameter)
+void wifiScanTask(void * parameter)
 {
-    while (true)
+    while(true)
     {
-        if (wifiManager.isAPMode())
+        if(wifiManager.isAPMode())
         {
             scanNetworks();
         }
@@ -34,23 +33,29 @@ void setup()
     Serial.begin(115200);
 
     Serial.println();
-    Serial.println("================================");
-    Serial.println("AMPERCORE HUB");
-    Serial.println("Version 0.1.3");
-    Serial.println("================================");
+    Serial.println(
+        "================================"
+    );
+    Serial.println(
+        "AMPERCORE HUB"
+    );
+    Serial.println(
+        "Version 0.1.4"
+    );
+    Serial.println(
+        "================================"
+    );
     Serial.println();
 
-    /*
-     * Inicializar configuracion
-     */
     configManager.begin();
 
-    /*
-     * Inicializar WiFi
-     */
     wifiManager.begin();
 
-    Serial.println("CONFIGURACION ACTUAL");
+    bool wifiConnected = false;
+
+    Serial.println(
+        "CONFIGURACION ACTUAL"
+    );
 
     Serial.print("SSID: ");
     Serial.println(
@@ -62,15 +67,9 @@ void setup()
         configManager.getHubName()
     );
 
-    Serial.println();
-
-    bool wifiConnected = false;
-
-    /*
-     * Intentar conectar si existe configuracion
-     */
-    if (configManager.isConfigured())
+    if(configManager.isConfigured())
     {
+        Serial.println();
         Serial.println(
             "Configuracion encontrada"
         );
@@ -82,26 +81,17 @@ void setup()
             );
     }
 
-    /*
-     * Si no conecta levantar AP
-     */
-    if (!wifiConnected)
+    if(!wifiConnected)
     {
         Serial.println();
         Serial.println(
-            "Iniciando modo configuracion..."
+            "Iniciando modo configuracion"
         );
 
         wifiManager.startAccessPoint();
 
-        /*
-         * Escaneo inicial
-         */
         scanNetworks();
 
-        /*
-         * Escaneo periodico
-         */
         xTaskCreatePinnedToCore(
             wifiScanTask,
             "WiFiScanTask",
@@ -113,14 +103,13 @@ void setup()
         );
     }
 
-    /*
-     * Portal web siempre disponible
-     */
     webPortal.begin();
+
+    apiServer.begin();
 
     Serial.println();
 
-    if (wifiConnected)
+    if(wifiConnected)
     {
         Serial.println(
             "MODO OPERACION"
@@ -156,10 +145,7 @@ void setup()
 
 void loop()
 {
-    /*
-     * Reconexion automatica
-     */
-    if (
+    if(
         !wifiManager.isAPMode()
         &&
         !wifiManager.isConnected()
