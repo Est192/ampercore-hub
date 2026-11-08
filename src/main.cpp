@@ -53,8 +53,8 @@ void setup()
 {
     Serial.begin(115200);
     diagnosticsManager.begin();
-    healthMonitor.begin(diagnosticsManager, mqttManager);
-    diagnosticsManager.info("SYSTEM", "AMPERCORE HUB Version 0.2.0 iniciando");
+    healthMonitor.begin(diagnosticsManager, mqttManager, deviceManager);
+    diagnosticsManager.info("SYSTEM", "AMPERCORE HUB Version 0.3.0-alpha iniciando");
 
     configManager.begin();
     wifiManager.begin();
@@ -129,7 +129,10 @@ void loop()
 
         if(mqttManager.publish("ampercore/hub/heartbeat", payload))
         {
-            diagnosticsManager.info("SYSTEM", "Heartbeat MQTT enviado");
+            if(diagnosticsManager.shouldLogHeartbeat())
+            {
+                diagnosticsManager.info("SYSTEM", "Heartbeat MQTT enviado");
+            }
         }
     }
 

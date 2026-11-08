@@ -5,6 +5,13 @@
 
 #include "Device.h"
 
+struct DeviceHealthSnapshot
+{
+    String id;
+    unsigned long lastSeen;
+    bool hasTelemetry;
+};
+
 class DeviceManager
 {
 public:
@@ -37,6 +44,8 @@ public:
     String getDeviceJson(
         const String& id
     );
+
+    std::vector<DeviceHealthSnapshot> getHealthSnapshot();
 
 private:
 

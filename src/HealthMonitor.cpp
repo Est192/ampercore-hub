@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <esp_system.h>
 
+#include "DeviceManager.h"
 #include "DiagnosticsManager.h"
 #include "MQTTManager.h"
 
@@ -85,11 +86,13 @@ const char* rebootReasonDescription(esp_reset_reason_t reason)
 
 void HealthMonitor::begin(
     DiagnosticsManager& diagnosticsManagerRef,
-    MQTTManager& mqttManagerRef
+    MQTTManager& mqttManagerRef,
+    DeviceManager& deviceManagerRef
 )
 {
     diagnostics = &diagnosticsManagerRef;
     mqttManager = &mqttManagerRef;
+    deviceManager = &deviceManagerRef;
 
     mutex = xSemaphoreCreateMutex();
     if(mutex == nullptr)
@@ -107,8 +110,8 @@ void HealthMonitor::begin(
     currentHeap = ESP.getFreeHeap();
     minimumHeap = ESP.getMinFreeHeap();
     averageHeap = currentHeap;
-    heapSampleTotal = currentHeap;
-    heapSampleCount = 1;
+    heapAccumulator = currentHeap;
+    heapSamples = 1;
     currentRssi = WiFi.isConnected() ? WiFi.RSSI() : 0;
     previousWifiConnected = WiFi.isConnected();
     previousMqttConnected = mqttManager->isConnected();
@@ -192,11 +195,10 @@ void HealthMonitor::sampleHeapLocked()
 {
     currentHeap = ESP.getFreeHeap();
     minimumHeap = ESP.getMinFreeHeap();
-    heapSampleTotal += currentHeap;
-    ++heapSampleCount;
-    averageHeap = heapSampleCount == 0
-        ? currentHeap
-        : static_cast<uint32_t>(heapSampleTotal / heapSampleCount);
+
+    heapAccumulator += currentHeap;
+    ++heapSamples;
+    averageHeap = static_cast<uint32_t>(heapAccumulator / heapSamples);
 }
 
 void HealthMonitor::recordReconnectLocked(bool mqtt, unsigned long now)
@@ -260,36 +262,10 @@ void HealthMonitor::noteDeviceDiscovered(const String& id)
     DeviceHealth device;
     device.id = id;
     device.discoveredAt = millis();
-    device.lastSeen = device.discoveredAt;
     device.status = HEALTH_OK;
     deviceHealth.push_back(device);
 
     addEventLocked("DEVICE_DISCOVERED", "Dispositivo detectado: " + id, HEALTH_OK);
-    giveMutex();
-}
-
-void HealthMonitor::noteTelemetryReceived(const String& id, unsigned long timestamp)
-{
-    takeMutex();
-
-    for(DeviceHealth& device : deviceHealth)
-    {
-        if(device.id == id)
-        {
-            device.lastSeen = timestamp;
-            device.hasTelemetry = true;
-            giveMutex();
-            return;
-        }
-    }
-
-    DeviceHealth device;
-    device.id = id;
-    device.discoveredAt = timestamp;
-    device.lastSeen = timestamp;
-    device.hasTelemetry = true;
-    deviceHealth.push_back(device);
-
     giveMutex();
 }
 
@@ -315,10 +291,15 @@ void HealthMonitor::noteDeviceRemoved(const String& id)
  * never reported telemetry uses its discovery time as the initial reference,
  * so a silent device is still detected rather than remaining ONLINE forever.
  */
-HealthStatus HealthMonitor::evaluateDeviceLocked(DeviceHealth& device, unsigned long now)
+HealthStatus HealthMonitor::evaluateDeviceLocked(
+    DeviceHealth& device,
+    unsigned long lastSeen,
+    bool hasTelemetry,
+    unsigned long now
+)
 {
-    const unsigned long referenceTime = device.hasTelemetry
-        ? device.lastSeen
+    const unsigned long referenceTime = hasTelemetry
+        ? lastSeen
         : device.discoveredAt;
     const unsigned long age = now - referenceTime;
 
@@ -535,9 +516,56 @@ void HealthMonitor::evaluateLocked(unsigned long now)
         mqttTrafficStale = false;
     }
 
-    for(DeviceHealth& device : deviceHealth)
+    const std::vector<DeviceHealthSnapshot> deviceSnapshots =
+        deviceManager == nullptr
+            ? std::vector<DeviceHealthSnapshot>()
+            : deviceManager->getHealthSnapshot();
+
+    for(const DeviceHealthSnapshot& snapshot : deviceSnapshots)
     {
-        evaluateDeviceLocked(device, now);
+        size_t cacheIndex = 0;
+        while(cacheIndex < deviceHealth.size() && deviceHealth[cacheIndex].id != snapshot.id)
+        {
+            ++cacheIndex;
+        }
+
+        if(cacheIndex == deviceHealth.size())
+        {
+            DeviceHealth cachedDevice;
+            cachedDevice.id = snapshot.id;
+            cachedDevice.discoveredAt = now;
+            deviceHealth.push_back(cachedDevice);
+            cacheIndex = deviceHealth.size() - 1;
+        }
+
+        evaluateDeviceLocked(
+            deviceHealth[cacheIndex],
+            snapshot.lastSeen,
+            snapshot.hasTelemetry,
+            now
+        );
+    }
+
+    for(size_t cacheIndex = 0; cacheIndex < deviceHealth.size();)
+    {
+        bool exists = false;
+        for(const DeviceHealthSnapshot& snapshot : deviceSnapshots)
+        {
+            if(snapshot.id == deviceHealth[cacheIndex].id)
+            {
+                exists = true;
+                break;
+            }
+        }
+
+        if(!exists)
+        {
+            deviceHealth.erase(deviceHealth.begin() + cacheIndex);
+        }
+        else
+        {
+            ++cacheIndex;
+        }
     }
 
     if(lastLoopAt != 0)
@@ -656,7 +684,10 @@ std::vector<HealthMetric> HealthMonitor::getMetrics()
     metrics.push_back({"wifi", WiFi.isConnected() ? "connected" : "disconnected", wifiStatus});
     metrics.push_back({"rssi", WiFi.isConnected() ? String(currentRssi) : "unavailable", rssiStatus});
     metrics.push_back({"mqtt", mqttManager != nullptr && mqttManager->isConnected() ? "connected" : "disconnected", mqttStatus});
-    metrics.push_back({"deviceCount", String(deviceHealth.size()), HEALTH_OK});
+    const size_t registeredDevices = deviceManager == nullptr
+        ? 0
+        : static_cast<size_t>(deviceManager->count());
+    metrics.push_back({"deviceCount", String(registeredDevices), HEALTH_OK});
     metrics.push_back({"offlineDevices", String(countOfflineDevicesLocked()), countOfflineDevicesLocked() > 0 ? HEALTH_CRITICAL : HEALTH_OK});
     metrics.push_back({"warningDevices", String(countWarningDevicesLocked()), countWarningDevicesLocked() > 0 ? HEALTH_WARNING : HEALTH_OK});
     metrics.push_back({"loopGapMs", String(lastLoopGap), loopStatus});
@@ -693,7 +724,7 @@ String HealthMonitor::getHealthJson()
     json += ",\"mqttConnected\":";
     json += mqttManager != nullptr && mqttManager->isConnected() ? "true" : "false";
     json += ",\"deviceCount\":";
-    json += String(deviceHealth.size());
+    json += String(deviceManager == nullptr ? 0 : deviceManager->count());
     json += ",\"offlineDevices\":";
     json += String(countOfflineDevicesLocked());
     json += ",\"warningDevices\":";
@@ -715,6 +746,33 @@ String HealthMonitor::getHealthJson()
     json += String(lastLoopGap);
     json += ",\"mqttLoopAgeMs\":";
     json += String(millis() - lastMqttLoopAt);
+    json += '}';
+
+    giveMutex();
+    return json;
+}
+
+String HealthMonitor::getSystemReportJson(const String& firmware)
+{
+    evaluateSystem();
+    takeMutex();
+
+    String json;
+    json.reserve(192);
+    json = "{\"firmware\":";
+    appendJsonString(json, firmware);
+    json += ",\"uptime\":";
+    json += String(millis() / 1000);
+    json += ",\"heap\":";
+    json += String(currentHeap);
+    json += ",\"devices\":";
+    json += String(deviceManager == nullptr ? 0 : deviceManager->count());
+    json += ",\"mqtt\":";
+    json += mqttManager != nullptr && mqttManager->isConnected() ? "true" : "false";
+    json += ",\"wifi\":";
+    json += WiFi.isConnected() ? "true" : "false";
+    json += ",\"status\":";
+    appendJsonString(json, getStatusName(overallStatus));
     json += '}';
 
     giveMutex();
@@ -787,11 +845,22 @@ String HealthMonitor::getAgentHealthReport()
     takeMutex();
 
     String json;
-    json.reserve(512);
+    json.reserve(768);
     json = "{\"overallStatus\":";
     appendJsonString(json, getStatusName(overallStatus));
     json += ",\"issues\":[";
     bool hasIssue = false;
+    String recommendations;
+    bool hasRecommendation = false;
+    const auto appendRecommendation = [&](const String& recommendation)
+    {
+        if(hasRecommendation)
+        {
+            recommendations += ',';
+        }
+        hasRecommendation = true;
+        appendJsonString(recommendations, recommendation);
+    };
 
     if(heapStatus != HEALTH_OK)
     {
@@ -802,6 +871,7 @@ String HealthMonitor::getAgentHealthReport()
             heapStatus,
             "Available heap is " + String(currentHeap) + " bytes"
         );
+        appendRecommendation("Inspect dynamic allocations and reduce peak memory usage.");
     }
 
     if(!WiFi.isConnected())
@@ -813,6 +883,7 @@ String HealthMonitor::getAgentHealthReport()
             HEALTH_WARNING,
             "WiFi is disconnected"
         );
+        appendRecommendation("Verify WiFi credentials, access point availability, and signal coverage.");
     }
     else if(rssiStatus != HEALTH_OK)
     {
@@ -823,6 +894,7 @@ String HealthMonitor::getAgentHealthReport()
             rssiStatus,
             "WiFi signal strength is " + String(currentRssi) + " dBm"
         );
+        appendRecommendation("Improve WiFi coverage or move the hub closer to the access point.");
     }
 
     if(mqttManager == nullptr || !mqttManager->isConnected())
@@ -834,6 +906,7 @@ String HealthMonitor::getAgentHealthReport()
             HEALTH_WARNING,
             "MQTT broker connection is unavailable"
         );
+        appendRecommendation("Verify broker reachability, DNS resolution, and network connectivity.");
     }
     else if(mqttTrafficStale)
     {
@@ -844,20 +917,53 @@ String HealthMonitor::getAgentHealthReport()
             HEALTH_WARNING,
             "No inbound MQTT messages have been received for more than 5 minutes"
         );
+        appendRecommendation("Verify that devices publish to subscribed topics and that MQTT traffic is expected.");
     }
 
-    for(const DeviceHealth& device : deviceHealth)
+    const std::vector<DeviceHealthSnapshot> deviceSnapshots =
+        deviceManager == nullptr
+            ? std::vector<DeviceHealthSnapshot>()
+            : deviceManager->getHealthSnapshot();
+
+    const unsigned long now = millis();
+    for(const DeviceHealthSnapshot& snapshot : deviceSnapshots)
     {
-        if(device.status != HEALTH_OK)
+        unsigned long discoveredAt = now;
+        for(const DeviceHealth& cached : deviceHealth)
         {
-            const unsigned long age = millis() - (device.hasTelemetry ? device.lastSeen : device.discoveredAt);
-            appendActiveIssue(
-                json,
-                hasIssue,
-                device.status == HEALTH_CRITICAL ? "DEVICE_OFFLINE" : "TELEMETRY_DELAYED",
-                device.status,
-                device.id + " has not reported telemetry for " + String(age / 1000) + " seconds"
-            );
+            if(cached.id == snapshot.id)
+            {
+                discoveredAt = cached.discoveredAt;
+                break;
+            }
+        }
+
+        const unsigned long age = snapshot.hasTelemetry
+            ? now - snapshot.lastSeen
+            : now - discoveredAt;
+        HealthStatus deviceStatus = HEALTH_OK;
+        if(age > STALE_TELEMETRY_CRITICAL_MS)
+        {
+            deviceStatus = HEALTH_CRITICAL;
+        }
+        else if(age > STALE_TELEMETRY_WARNING_MS)
+        {
+            deviceStatus = HEALTH_WARNING;
+        }
+
+        const String issueType = deviceStatus == HEALTH_CRITICAL
+            ? "DEVICE_OFFLINE"
+            : "TELEMETRY_DELAYED";
+        appendActiveIssue(
+            json,
+            hasIssue,
+            issueType,
+            deviceStatus,
+            snapshot.id + " has not reported telemetry for " + String(age / 1000) + " seconds"
+        );
+        if(deviceStatus != HEALTH_OK)
+        {
+            appendRecommendation("Check power, network reachability, and telemetry publishing for device " + snapshot.id + ".");
         }
     }
 
@@ -870,6 +976,7 @@ String HealthMonitor::getAgentHealthReport()
             loopStatus,
             "Main loop interval exceeded the 15 second warning threshold"
         );
+        appendRecommendation("Check blocking operations and long delays in the main loop.");
     }
 
     if(mqttLoopStatus != HEALTH_OK)
@@ -881,8 +988,11 @@ String HealthMonitor::getAgentHealthReport()
             mqttLoopStatus,
             "MQTT service loop has not run within the 15 second threshold"
         );
+        appendRecommendation("Check for blocking work that prevents MQTTManager::loop() from running.");
     }
 
+    json += "],\"recommendations\":[";
+    json += recommendations;
     json += "]}";
     giveMutex();
     return json;

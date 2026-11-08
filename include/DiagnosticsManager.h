@@ -26,10 +26,19 @@ struct LogEntry
     unsigned long timestamp;
 };
 
+struct DiagnosticsSettings
+{
+    bool logHeartbeat = false;
+};
+
 class DiagnosticsManager
 {
 public:
     void begin();
+
+    void setSettings(const DiagnosticsSettings& settings);
+    DiagnosticsSettings getSettings();
+    bool shouldLogHeartbeat();
 
     void info(const String& module, const String& message);
     void warning(const String& module, const String& message);
@@ -45,10 +54,17 @@ public:
     void incrementMqttMessagesSent();
     void incrementMqttReconnects();
     void incrementWifiReconnects();
-    void setRegisteredDevices(uint32_t count);
 
-    String getLogsJson();
-    String getDiagnosticsJson(bool mqttConnected, bool wifiConnected);
+    String getLogsJson(
+        size_t limit = 50,
+        const String& level = "",
+        unsigned long since = 0
+    );
+    String getDiagnosticsJson(
+        bool mqttConnected,
+        bool wifiConnected,
+        uint32_t registeredDevices
+    );
 
 private:
     static constexpr size_t MAX_LOG_ENTRIES = 200;
@@ -59,6 +75,7 @@ private:
     void giveLogMutex();
     void takeStorageMutex();
     void giveStorageMutex();
+    bool rotateFileIfNeeded(const char* path, size_t incomingBytes);
 
     LogEntry logs[MAX_LOG_ENTRIES];
     size_t logStart = 0;
@@ -68,9 +85,9 @@ private:
     uint32_t mqttMessagesSent = 0;
     uint32_t mqttReconnects = 0;
     uint32_t wifiReconnects = 0;
-    uint32_t registeredDevices = 0;
     uint32_t errorCount = 0;
     uint32_t warningCount = 0;
+    DiagnosticsSettings settings;
 
     SemaphoreHandle_t logMutex = nullptr;
     SemaphoreHandle_t storageMutex = nullptr;

@@ -28,9 +28,6 @@ void DeviceManager::addDevice(
         device
     );
 
-    diagnosticsManager.setRegisteredDevices(
-        static_cast<uint32_t>(devices.size())
-    );
     healthMonitor.noteDeviceDiscovered(device.id);
 
     diagnosticsManager.info(
@@ -73,9 +70,6 @@ bool DeviceManager::removeDevice(
             devices.erase(it);
 
             healthMonitor.noteDeviceRemoved(id);
-            diagnosticsManager.setRegisteredDevices(
-                static_cast<uint32_t>(devices.size())
-            );
             diagnosticsManager.info(
                 "DEVICE",
                 "Dispositivo eliminado: " + id
@@ -129,7 +123,6 @@ bool DeviceManager::updateTelemetry(
     device->telemetry =
         telemetry;
 
-    healthMonitor.noteTelemetryReceived(id, telemetry.timestamp);
     diagnosticsManager.info(
         "DEVICE",
         "Telemetry actualizada: " + id
@@ -234,4 +227,21 @@ String DeviceManager::getDeviceJson(
     json += "}";
 
     return json;
+}
+
+std::vector<DeviceHealthSnapshot> DeviceManager::getHealthSnapshot()
+{
+    std::vector<DeviceHealthSnapshot> snapshot;
+    snapshot.reserve(devices.size());
+
+    for(const Device& device : devices)
+    {
+        snapshot.push_back({
+            device.id,
+            device.telemetry.timestamp,
+            device.telemetry.timestamp != 0
+        });
+    }
+
+    return snapshot;
 }

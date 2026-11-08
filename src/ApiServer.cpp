@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
+#include <limits.h>
 
 #include "ConfigManager.h"
 #include "WebPortal.h"
@@ -24,6 +25,52 @@ extern std::vector<String> scannedNetworks;
 
 namespace
 {
+bool parseUnsignedParameter(
+    const String& value,
+    unsigned long maximum,
+    unsigned long& parsed
+)
+{
+    if(value.isEmpty())
+    {
+        return false;
+    }
+
+    parsed = 0;
+    for(size_t i = 0; i < value.length(); ++i)
+    {
+        const char character = value[i];
+        if(character < '0' || character > '9')
+        {
+            return false;
+        }
+
+        const unsigned long digit = static_cast<unsigned long>(character - '0');
+        if(parsed > (maximum - digit) / 10)
+        {
+            return false;
+        }
+        parsed = parsed * 10 + digit;
+    }
+
+    return true;
+}
+
+bool normalizeLogLevel(const String& requested, String& normalized)
+{
+    const char* levels[] = {"INFO", "WARNING", "ERROR", "CRITICAL"};
+    for(const char* level : levels)
+    {
+        if(requested.equalsIgnoreCase(level))
+        {
+            normalized = level;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void registerDeviceCommandEndpoint(const char* path, const char* action)
 {
     server.on(
@@ -303,7 +350,8 @@ void ApiServer::begin()
                 diagnosticsManager
                     .getDiagnosticsJson(
                         mqttManager.isConnected(),
-                        WiFi.isConnected()
+                        WiFi.isConnected(),
+                        static_cast<uint32_t>(deviceManager.count())
                     )
             );
         }
@@ -314,11 +362,47 @@ void ApiServer::begin()
         HTTP_GET,
         [](AsyncWebServerRequest *request)
         {
+            size_t limit = 50;
+            String level;
+            unsigned long since = 0;
+
+            if(request->hasParam("limit"))
+            {
+                unsigned long parsedLimit = 0;
+                if(!parseUnsignedParameter(
+                    request->getParam("limit")->value(),
+                    200,
+                    parsedLimit
+                ) || parsedLimit == 0)
+                {
+                    request->send(400, "application/json", "{\"error\":\"limit must be between 1 and 200\"}");
+                    return;
+                }
+                limit = static_cast<size_t>(parsedLimit);
+            }
+
+            if(request->hasParam("level") &&
+                !normalizeLogLevel(request->getParam("level")->value(), level))
+            {
+                request->send(400, "application/json", "{\"error\":\"level must be INFO, WARNING, ERROR, or CRITICAL\"}");
+                return;
+            }
+
+            if(request->hasParam("since") &&
+                !parseUnsignedParameter(
+                    request->getParam("since")->value(),
+                    ULONG_MAX,
+                    since
+                ))
+            {
+                request->send(400, "application/json", "{\"error\":\"since must be an unsigned timestamp\"}");
+                return;
+            }
+
             request->send(
                 200,
                 "application/json",
-                diagnosticsManager
-                    .getLogsJson()
+                diagnosticsManager.getLogsJson(limit, level, since)
             );
         }
     );
@@ -345,6 +429,32 @@ void ApiServer::begin()
                 200,
                 "application/json",
                 healthMonitor.getHealthEventsJson()
+            );
+        }
+    );
+
+    server.on(
+        "/api/system/report",
+        HTTP_GET,
+        [](AsyncWebServerRequest* request)
+        {
+            request->send(
+                200,
+                "application/json",
+                healthMonitor.getSystemReportJson("0.3.0-alpha")
+            );
+        }
+    );
+
+    server.on(
+        "/api/agent/report",
+        HTTP_GET,
+        [](AsyncWebServerRequest* request)
+        {
+            request->send(
+                200,
+                "application/json",
+                healthMonitor.getAgentHealthReport()
             );
         }
     );

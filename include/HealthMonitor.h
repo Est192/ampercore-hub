@@ -51,7 +51,8 @@ class HealthMonitor
 public:
     void begin(
         DiagnosticsManager& diagnostics,
-        MQTTManager& mqtt
+        MQTTManager& mqtt,
+        DeviceManager& devices
     );
 
     void loop();
@@ -59,12 +60,12 @@ public:
     void noteMqttMessageReceived();
     void noteMqttLoop();
     void noteDeviceDiscovered(const String& id);
-    void noteTelemetryReceived(const String& id, unsigned long timestamp);
     void noteDeviceRemoved(const String& id);
 
     HealthStatus evaluateSystem();
     std::vector<HealthMetric> getMetrics();
     String getHealthJson();
+    String getSystemReportJson(const String& firmware);
     String getHealthEventsJson();
     String getAgentHealthReport();
 
@@ -73,9 +74,7 @@ private:
     {
         String id;
         unsigned long discoveredAt = 0;
-        unsigned long lastSeen = 0;
         HealthStatus status = HEALTH_OK;
-        bool hasTelemetry = false;
     };
 
     static constexpr size_t MAX_HEALTH_EVENTS = 50;
@@ -92,7 +91,12 @@ private:
     void recordReconnectLocked(bool mqtt, unsigned long now);
     void evaluateLocked(unsigned long now);
     HealthStatus evaluateSystemLocked(unsigned long now);
-    HealthStatus evaluateDeviceLocked(DeviceHealth& device, unsigned long now);
+    HealthStatus evaluateDeviceLocked(
+        DeviceHealth& device,
+        unsigned long lastSeen,
+        bool hasTelemetry,
+        unsigned long now
+    );
     void sampleHeapLocked();
     size_t countOfflineDevicesLocked() const;
     size_t countWarningDevicesLocked() const;
@@ -108,6 +112,7 @@ private:
 
     DiagnosticsManager* diagnostics = nullptr;
     MQTTManager* mqttManager = nullptr;
+    DeviceManager* deviceManager = nullptr;
     SemaphoreHandle_t mutex = nullptr;
 
     HealthEvent events[MAX_HEALTH_EVENTS];
@@ -123,8 +128,8 @@ private:
     uint32_t currentHeap = 0;
     uint32_t minimumHeap = 0;
     uint32_t averageHeap = 0;
-    uint64_t heapSampleTotal = 0;
-    uint32_t heapSampleCount = 0;
+    uint64_t heapAccumulator = 0;
+    uint64_t heapSamples = 0;
     uint32_t loopStallCount = 0;
     uint32_t wifiReconnectCount = 0;
     uint32_t mqttReconnectCount = 0;
