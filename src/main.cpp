@@ -1,11 +1,14 @@
 #include <Arduino.h>
 #include <WiFi.h>
-#include "WifiManager.h"
-#include "ConfigManager.h"
-#include "WebPortal.h"
+
 #include "ApiServer.h"
-#include "MQTTManager.h"
+#include "ConfigManager.h"
 #include "DeviceManager.h"
+#include "DiagnosticsManager.h"
+#include "HealthMonitor.h"
+#include "MQTTManager.h"
+#include "WebPortal.h"
+#include "WifiManager.h"
 
 DeviceManager deviceManager;
 WifiManager wifiManager;
@@ -13,198 +16,126 @@ ConfigManager configManager;
 WebPortal webPortal;
 ApiServer apiServer;
 MQTTManager mqttManager;
-TaskHandle_t wifiScanTaskHandle = NULL;
+DiagnosticsManager diagnosticsManager;
+HealthMonitor healthMonitor;
 
+TaskHandle_t wifiScanTaskHandle = nullptr;
 unsigned long lastHeartbeat = 0;
 
-void wifiScanTask(void * parameter)
+/*
+ * System flow: initialize diagnostics first so startup and subsystem events use
+ * the same sink. WiFi and portal can operate in setup mode; MQTT is enabled
+ * when station mode has a connection. The scan task only requests WiFi scans.
+ */
+void wifiScanTask(void* parameter)
 {
+    (void)parameter;
+    unsigned long lastPeriodicScan = 0;
+
     while(true)
     {
-        if(wifiManager.isAPMode())
+        const unsigned long now = millis();
+        const bool manualScanRequested = takeNetworkScanRequest();
+        const bool periodicScanDue =
+            wifiManager.isAPMode() && now - lastPeriodicScan >= 30000;
+
+        if(manualScanRequested || periodicScanDue)
         {
+            lastPeriodicScan = now;
             scanNetworks();
         }
 
-        vTaskDelay(
-            pdMS_TO_TICKS(30000)
-        );
+        vTaskDelay(pdMS_TO_TICKS(250));
     }
 }
 
 void setup()
 {
     Serial.begin(115200);
-
-    Serial.println();
-    Serial.println(
-        "================================"
-    );
-    Serial.println(
-        "AMPERCORE HUB"
-    );
-    Serial.println(
-        "Version 0.2.0"
-    );
-    Serial.println(
-        "================================"
-    );
-    Serial.println();
+    diagnosticsManager.begin();
+    healthMonitor.begin(diagnosticsManager, mqttManager);
+    diagnosticsManager.info("SYSTEM", "AMPERCORE HUB Version 0.2.0 iniciando");
 
     configManager.begin();
-
     wifiManager.begin();
 
     bool wifiConnected = false;
-
-    Serial.println(
-        "CONFIGURACION ACTUAL"
-    );
-
-    Serial.print("SSID: ");
-    Serial.println(
-        configManager.getSSID()
-    );
-
-    Serial.print("Hub: ");
-    Serial.println(
-        configManager.getHubName()
-    );
-
     if(configManager.isConfigured())
     {
-        Serial.println();
-        Serial.println(
-            "Configuracion encontrada"
+        diagnosticsManager.info("CONFIG", "Configuracion WiFi encontrada");
+        wifiConnected = wifiManager.connectToWiFi(
+            configManager.getSSID(),
+            configManager.getPassword()
         );
 
-        wifiConnected =
-            wifiManager.connectToWiFi(
-                configManager.getSSID(),
-                configManager.getPassword()
-            );
-
-        if (wifiConnected)
+        if(wifiConnected)
         {
-            Serial.println(
-                "Escaneo inicial de redes..."
-            );
             scanNetworks();
         }
     }
 
     if(!wifiConnected)
     {
-        Serial.println();
-        Serial.println(
-            "Iniciando modo configuracion"
-        );
-
+        diagnosticsManager.info("SYSTEM", "Iniciando modo de configuracion");
         wifiManager.startAccessPoint();
-
         scanNetworks();
+    }
 
-        xTaskCreatePinnedToCore(
-            wifiScanTask,
-            "WiFiScanTask",
-            4096,
-            NULL,
-            1,
-            &wifiScanTaskHandle,
-            1
-        );
+    const BaseType_t scanTaskResult = xTaskCreatePinnedToCore(
+        wifiScanTask,
+        "WiFiScanTask",
+        4096,
+        nullptr,
+        1,
+        &wifiScanTaskHandle,
+        1
+    );
+
+    if(scanTaskResult != pdPASS)
+    {
+        diagnosticsManager.error("SYSTEM", "No se pudo iniciar WiFiScanTask");
     }
 
     webPortal.begin();
-
     apiServer.begin();
-
-      if(wifiConnected)
-      {
-          mqttManager.begin();
-
-          mqttManager.connect();
-      }
-
-    Serial.println();
 
     if(wifiConnected)
     {
-        Serial.println(
-            "MODO OPERACION"
-        );
-
-        Serial.print("SSID: ");
-        Serial.println(
-            wifiManager.getSSID()
-        );
-
-        Serial.print("IP: ");
-        Serial.println(
-            wifiManager.getLocalIP()
-        );
+        mqttManager.begin();
+        mqttManager.connect();
+        diagnosticsManager.info("SYSTEM", "Modo de operacion; IP: " + wifiManager.getLocalIP());
     }
     else
     {
-        Serial.println(
-            "MODO CONFIGURACION"
-        );
-
-        Serial.print("IP AP: ");
-        Serial.println(
-            WiFi.softAPIP()
-        );
+        diagnosticsManager.info("SYSTEM", "Modo de configuracion; IP AP: " + WiFi.softAPIP().toString());
     }
 
-    Serial.println();
-    Serial.println(
-        "Sistema listo"
-    );
+    healthMonitor.noteMqttLoop();
+    diagnosticsManager.info("SYSTEM", "Sistema listo");
 }
 
 void loop()
 {
-  mqttManager.loop();
+    mqttManager.loop();
+    healthMonitor.loop();
 
-  if(
-    millis() - lastHeartbeat >
-    30000
-    )
+    if(millis() - lastHeartbeat > 30000)
     {
         lastHeartbeat = millis();
 
-        String payload =
-            "{"
-            "\"heap\":" +
-            String(
-                ESP.getFreeHeap()
-            ) +
-            ",\"uptime\":" +
-            String(
-                millis()/1000
-            ) +
-            "}";
+        const String payload =
+            "{\"heap\":" + String(ESP.getFreeHeap()) +
+            ",\"uptime\":" + String(millis() / 1000) + "}";
 
-        mqttManager.publish(
-            "ampercore/hub/heartbeat",
-            payload
-        );
-
-        Serial.println(
-            "Heartbeat MQTT enviado"
-        );
+        if(mqttManager.publish("ampercore/hub/heartbeat", payload))
+        {
+            diagnosticsManager.info("SYSTEM", "Heartbeat MQTT enviado");
+        }
     }
 
-    if(
-        !wifiManager.isAPMode()
-        &&
-        !wifiManager.isConnected()
-    )
+    if(!wifiManager.isAPMode() && !wifiManager.isConnected())
     {
-        Serial.println(
-            "Conexion perdida"
-        );
-
+        diagnosticsManager.warning("WIFI", "Conexion WiFi perdida");
         wifiManager.reconnect();
     }
 

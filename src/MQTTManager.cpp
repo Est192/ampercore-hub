@@ -1,11 +1,101 @@
 #include "MQTTManager.h"
+
 #include <ArduinoJson.h>
+
 #include "DeviceManager.h"
 #include "Telemetry.h"
+#include "DiagnosticsManager.h"
+#include "HealthMonitor.h"
 
+extern DiagnosticsManager diagnosticsManager;
 extern DeviceManager deviceManager;
+extern HealthMonitor healthMonitor;
 
+/*
+ * MQTT flow: connect() installs Discovery and device subscriptions; callback()
+ * dispatches incoming Discovery/Telemetry; publish() counts successful
+ * outbound packets, including telemetry and Commands. Commands are published
+ * to the per-device command topic and Discovery creates DeviceManager entries.
+ */
 MQTTManager* MQTTManager::instance = nullptr;
+
+namespace
+{
+bool registerDiscoveredDevice(const String& payload)
+{
+    JsonDocument doc;
+    const DeserializationError parseError = deserializeJson(doc, payload);
+
+    if(parseError)
+    {
+        diagnosticsManager.warning("MQTT", "Discovery JSON invalido");
+        return false;
+    }
+
+    Device device;
+    device.id = doc["id"].as<String>();
+    device.name = doc["name"].as<String>();
+    device.type = doc["type"].as<String>();
+    device.state = "online";
+
+    if(device.id.isEmpty() || device.name.isEmpty() || device.type.isEmpty())
+    {
+        diagnosticsManager.warning("MQTT", "Discovery incompleto: se requieren id, name y type");
+        return false;
+    }
+
+    deviceManager.addDevice(device);
+    return true;
+}
+
+String commandPayload(const String& action)
+{
+    JsonDocument document;
+    document["action"] = action;
+
+    String payload;
+    serializeJson(document, payload);
+    return payload;
+}
+
+const char* mqttStateDescription(
+    int state
+)
+{
+    switch(state)
+    {
+        case -4:
+            return "connection timeout";
+
+        case -3:
+            return "connection lost";
+
+        case -2:
+            return "network connection failed";
+
+        case -1:
+            return "client disconnected";
+
+        case 1:
+            return "incorrect MQTT protocol";
+
+        case 2:
+            return "rejected client identifier";
+
+        case 3:
+            return "broker unavailable";
+
+        case 4:
+            return "bad username or password";
+
+        case 5:
+            return "not authorized";
+
+        default:
+            return "unknown MQTT state";
+    }
+}
+}
 
 MQTTManager::MQTTManager()
     : mqttClient(wifiClient)
@@ -34,9 +124,7 @@ void MQTTManager::begin()
         callback
     );
 
-    Serial.println(
-        "MQTT Manager iniciado"
-    );
+    diagnosticsManager.info("MQTT", "MQTT Manager iniciado");
 }
 
 bool MQTTManager::connect()
@@ -46,9 +134,68 @@ bool MQTTManager::connect()
         return true;
     }
 
-    Serial.println(
-        "Conectando MQTT..."
+    if(WiFi.status() != WL_CONNECTED)
+    {
+        diagnosticsManager.warning(
+            "MQTT",
+            "MQTT connection skipped: WiFi disconnected"
+        );
+
+        return false;
+    }
+
+    IPAddress brokerAddress;
+
+    const bool dnsResolved =
+        WiFi.hostByName(
+            broker.c_str(),
+            brokerAddress
+        ) == 1;
+
+    if(!dnsResolved)
+    {
+        diagnosticsManager.error(
+            "MQTT",
+            "MQTT DNS lookup failed: " +
+            broker
+        );
+
+        return false;
+    }
+
+    mqttClient.setServer(
+        brokerAddress,
+        static_cast<uint16_t>(
+            port
+        )
     );
+
+    WiFiClient tcpProbe;
+
+    if(
+        !tcpProbe.connect(
+            brokerAddress,
+            static_cast<uint16_t>(
+                port
+            )
+        )
+    )
+    {
+        diagnosticsManager.error(
+            "MQTT",
+            "MQTT TCP probe failed"
+        );
+
+        tcpProbe.stop();
+
+        return false;
+    }
+
+    tcpProbe.stop();
+
+    delay(100);
+
+    mqttClient.setSocketTimeout(8);
 
     bool result =
         mqttClient.connect(
@@ -57,34 +204,89 @@ bool MQTTManager::connect()
 
     if(result)
     {
-        Serial.println(
-            "MQTT conectado"
-        );
-
-        mqttClient.subscribe(
+        const bool discoverySubscribed = mqttClient.subscribe(
             "ampercore/discovery"
         );
 
-        mqttClient.subscribe(
+        const bool devicesSubscribed = mqttClient.subscribe(
             "ampercore/device/#"
+        );
+
+        if(!discoverySubscribed || !devicesSubscribed)
+        {
+            diagnosticsManager.error("MQTT", "Fallo al registrar una o mas subscriptions");
+        }
+
+        if(hasConnectedOnce)
+        {
+            diagnosticsManager.incrementMqttReconnects();
+        }
+        hasConnectedOnce = true;
+
+        diagnosticsManager.info(
+            "MQTT",
+            "MQTT conectado"
+        );
+
+        diagnosticsManager.info(
+            "MQTT",
+            "MQTT subscriptions registered"
         );
     }
     else
     {
-        Serial.print(
-            "MQTT Error: "
-        );
+        const int state =
+            mqttClient.state();
 
-        Serial.println(
-            mqttClient.state()
+        diagnosticsManager.error(
+            "MQTT",
+            "MQTT Error: " +
+            String(state) +
+            " (" +
+            mqttStateDescription(
+                state
+            ) +
+            ")"
         );
     }
 
     return result;
 }
 
+bool MQTTManager::sendCommand(
+    const String& deviceId,
+    const String& action
+)
+{
+    String topic =
+        "ampercore/device/" +
+        deviceId +
+        "/command";
+
+    const String payload = commandPayload(action);
+
+    const bool published = publish(
+        topic,
+        payload
+    );
+
+    if(published)
+    {
+        diagnosticsManager.info("MQTT", "Command enviado: " + action + " -> " + deviceId);
+    }
+
+    return published;
+}
+
 void MQTTManager::loop()
 {
+    healthMonitor.noteMqttLoop();
+
+    if(WiFi.status() != WL_CONNECTED)
+    {
+        return;
+    }
+
     if(!mqttClient.connected())
     {
         unsigned long now =
@@ -93,7 +295,7 @@ void MQTTManager::loop()
         if(
             now -
             lastReconnectAttempt >
-            5000
+            15000
         )
         {
             lastReconnectAttempt =
@@ -116,19 +318,39 @@ bool MQTTManager::publish(
     const String& payload
 )
 {
-    return mqttClient.publish(
+    if(!mqttClient.connected())
+    {
+        diagnosticsManager.warning("MQTT", "Publish omitido: cliente desconectado");
+        return false;
+    }
+
+    const bool published = mqttClient.publish(
         topic.c_str(),
         payload.c_str()
     );
+
+    if(published)
+    {
+        diagnosticsManager.incrementMqttMessagesSent();
+    }
+    else
+    {
+        diagnosticsManager.error("MQTT", "Fallo al publicar en " + topic);
+    }
+
+    return published;
 }
 
 void MQTTManager::subscribe(
     const String& topic
 )
 {
-    mqttClient.subscribe(
+    if(!mqttClient.subscribe(
         topic.c_str()
-    );
+    ))
+    {
+        diagnosticsManager.warning("MQTT", "Fallo al suscribirse a " + topic);
+    }
 }
 
 String MQTTManager::getBroker()
@@ -152,7 +374,8 @@ String MQTTManager::extractDeviceIdFromTopic(
         "/telemetry";
 
     if(
-        !topic.startsWith(prefix) ||
+        !topic.startsWith(prefix)
+        ||
         !topic.endsWith(suffix)
     )
     {
@@ -161,7 +384,8 @@ String MQTTManager::extractDeviceIdFromTopic(
 
     return topic.substring(
         prefix.length(),
-        topic.length() - suffix.length()
+        topic.length() -
+        suffix.length()
     );
 }
 
@@ -170,38 +394,21 @@ void MQTTManager::processTelemetryMessage(
     const String& payload
 )
 {
-    Serial.println(
-        "--- Telemetry Processing ---"
-    );
-    Serial.print(
-        "Received topic: "
-    );
-    Serial.println(
-        topic
-    );
-    Serial.print(
-        "Received payload: "
-    );
-    Serial.println(
-        payload
-    );
-
     JsonDocument doc;
+
     DeserializationError error =
         deserializeJson(
             doc,
             payload
         );
 
-    Serial.print(
-        "deserializeJson() result: "
-    );
-    Serial.println(
-        error.c_str()
-    );
-
-    if(error != DeserializationError::Ok)
+    if(error)
     {
+        diagnosticsManager.error(
+            "MQTT",
+            "Telemetry JSON invalido"
+        );
+
         return;
     }
 
@@ -210,80 +417,35 @@ void MQTTManager::processTelemetryMessage(
             topic
         );
 
-    Serial.print(
-        "Extracted DeviceId: "
-    );
-    Serial.println(
-        deviceId
-    );
-
     if(deviceId.length() == 0)
     {
-        Serial.println(
-            "Topic does not match ampercore/device/<id>/telemetry"
-        );
-        return;
-    }
-
-    Device* device =
-        deviceManager.findDevice(
-            deviceId
+        diagnosticsManager.warning(
+            "MQTT",
+            "Telemetry topic invalido: " +
+            topic
         );
 
-    Serial.print(
-        "deviceManager.findDevice() result: "
-    );
-    Serial.println(
-        device != nullptr
-            ? "FOUND"
-            : "NOT FOUND"
-    );
-
-    if(device == nullptr)
-    {
         return;
     }
-
-    Serial.printf(
-        "Telemetry before update: V=%.2f C=%.2f P=%.2f E=%.2f\n",
-        device->telemetry.voltage,
-        device->telemetry.current,
-        device->telemetry.power,
-        device->telemetry.energy
-    );
 
     Telemetry telemetry;
+
     telemetry.voltage =
         doc["voltage"] | 0.0f;
+
     telemetry.current =
         doc["current"] | 0.0f;
+
     telemetry.power =
         doc["power"] | 0.0f;
+
     telemetry.energy =
         doc["energy"] | 0.0f;
+
     telemetry.timestamp =
         millis();
 
-    bool updated =
-        deviceManager.updateTelemetry(
-            deviceId,
-            telemetry
-        );
-
-    Serial.print(
-        "updateTelemetry() result: "
-    );
-    Serial.println(
-        updated ? "true" : "false"
-    );
-
-    Serial.printf(
-        "Telemetry after update: V=%.2f C=%.2f P=%.2f E=%.2f\n",
-        device->telemetry.voltage,
-        device->telemetry.current,
-        device->telemetry.power,
-        device->telemetry.energy
-    );
+    deviceManager.updateTelemetry(deviceId, telemetry);
 }
 
 void MQTTManager::handleIncomingMessage(
@@ -292,10 +454,13 @@ void MQTTManager::handleIncomingMessage(
     unsigned int length
 )
 {
+    diagnosticsManager.incrementMqttMessagesReceived();
+    healthMonitor.noteMqttMessageReceived();
+
     String topicStr =
         String(topic);
 
-    String message = "";
+    String message;
 
     for(
         unsigned int i = 0;
@@ -307,67 +472,12 @@ void MQTTManager::handleIncomingMessage(
             (char)payload[i];
     }
 
-    Serial.println();
-    Serial.print(
-        "TOPIC: "
-    );
-    Serial.println(
-        topicStr
-    );
-    Serial.print(
-        "PAYLOAD: "
-    );
-    Serial.println(
-        message
-    );
-
     if(
         topicStr ==
         "ampercore/discovery"
     )
     {
-        JsonDocument doc;
-
-        DeserializationError error =
-            deserializeJson(
-                doc,
-                message
-            );
-
-        Serial.print(
-            "Discovery deserializeJson() result: "
-        );
-        Serial.println(
-            error.c_str()
-        );
-
-        if(error == DeserializationError::Ok)
-        {
-            Device device;
-
-            device.id =
-                doc["id"]
-                .as<String>();
-
-            device.name =
-                doc["name"]
-                .as<String>();
-
-            device.type =
-                doc["type"]
-                .as<String>();
-
-            device.state =
-                "online";
-
-            deviceManager.addDevice(
-                device
-            );
-
-            Serial.println(
-                "Dispositivo descubierto"
-            );
-        }
+        registerDiscoveredDevice(message);
 
         return;
     }
@@ -375,7 +485,8 @@ void MQTTManager::handleIncomingMessage(
     if(
         topicStr.startsWith(
             "ampercore/device/"
-        ) &&
+        )
+        &&
         topicStr.endsWith(
             "/telemetry"
         )
@@ -410,41 +521,5 @@ void processDiscoveryMessage(
     const String& payload
 )
 {
-    JsonDocument doc;
-
-    DeserializationError error =
-        deserializeJson(
-            doc,
-            payload
-        );
-
-    if(error)
-    {
-        Serial.println(
-            "JSON invalido"
-        );
-
-        return;
-    }
-
-    Device device;
-
-    device.id =
-        doc["id"]
-        .as<String>();
-
-    device.name =
-        doc["name"]
-        .as<String>();
-
-    device.type =
-        doc["type"]
-        .as<String>();
-
-    device.state =
-        "online";
-
-    deviceManager.addDevice(
-        device
-    );
+    registerDiscoveredDevice(payload);
 }

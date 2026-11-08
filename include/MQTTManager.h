@@ -43,6 +43,11 @@ public:
 
     int getPort();
 
+    bool sendCommand(
+    const String& deviceId,
+    const String& action
+    );
+
 private:
 
     static MQTTManager* instance;
@@ -59,6 +64,7 @@ private:
     String clientId;
 
     unsigned long lastReconnectAttempt = 0;
+    bool hasConnectedOnce = false;
 
     static void callback(
         char* topic,

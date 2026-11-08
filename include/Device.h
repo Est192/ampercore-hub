@@ -14,6 +14,8 @@ struct Device
 
     String state =
         "online";
+    
+    bool controllable = true;
 
     Telemetry telemetry;
 };

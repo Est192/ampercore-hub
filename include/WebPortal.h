@@ -16,3 +16,7 @@ extern String cachedNetworks;
 extern std::vector<String> scannedNetworks;
 
 void scanNetworks();
+
+void requestNetworkScan();
+
+bool takeNetworkScanRequest();

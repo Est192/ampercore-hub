@@ -1,22 +1,45 @@
 #include "DeviceManager.h"
+#include "DiagnosticsManager.h"
+#include "HealthMonitor.h"
+
+extern DiagnosticsManager diagnosticsManager;
+extern HealthMonitor healthMonitor;
 
 void DeviceManager::addDevice(
     const Device& device
 )
 {
-    if(deviceExists(device.id))
+    if(
+        deviceExists(
+            device.id
+        )
+    )
     {
+        diagnosticsManager.warning(
+            "DEVICE",
+            "Dispositivo duplicado: "
+            + device.id
+        );
+
         return;
     }
 
-    devices.push_back(device);
-
-    Serial.print(
-        "Dispositivo registrado: "
+    devices.push_back(
+        device
     );
 
-    Serial.println(
-        device.name
+    diagnosticsManager.setRegisteredDevices(
+        static_cast<uint32_t>(devices.size())
+    );
+    healthMonitor.noteDeviceDiscovered(device.id);
+
+    diagnosticsManager.info(
+        "DEVICE",
+        "Dispositivo registrado: "
+        + device.name
+        + " ("
+        + device.id
+        + ")"
     );
 }
 
@@ -48,6 +71,15 @@ bool DeviceManager::removeDevice(
         if(it->id == id)
         {
             devices.erase(it);
+
+            healthMonitor.noteDeviceRemoved(id);
+            diagnosticsManager.setRegisteredDevices(
+                static_cast<uint32_t>(devices.size())
+            );
+            diagnosticsManager.info(
+                "DEVICE",
+                "Dispositivo eliminado: " + id
+            );
 
             return true;
         }
@@ -85,23 +117,22 @@ bool DeviceManager::updateTelemetry(
 
     if(device == nullptr)
     {
-        Serial.print(
-            "updateTelemetry() failed: device not found -> "
+        diagnosticsManager.error(
+            "DEVICE",
+            "Telemetry device not found: "
+            + id
         );
-        Serial.println(
-            id
-        );
+
         return false;
     }
 
     device->telemetry =
         telemetry;
 
-    Serial.print(
-        "Telemetry saved for device "
-    );
-    Serial.println(
-        id
+    healthMonitor.noteTelemetryReceived(id, telemetry.timestamp);
+    diagnosticsManager.info(
+        "DEVICE",
+        "Telemetry actualizada: " + id
     );
 
     return true;

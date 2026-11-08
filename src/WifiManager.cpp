@@ -2,33 +2,36 @@
 
 #include <WiFi.h>
 
+#include "DiagnosticsManager.h"
+
+extern DiagnosticsManager diagnosticsManager;
+
 void WifiManager::begin()
 {
     WiFi.mode(WIFI_OFF);
 
     delay(500);
+    diagnosticsManager.info("WIFI", "WiFi Manager iniciado");
 }
 
 void WifiManager::startAccessPoint()
 {
     WiFi.mode(WIFI_AP);
 
-    WiFi.softAP(
+    if(!WiFi.softAP(
         "Ampercore_Setup",
         "ampercore123"
-    );
+    ))
+    {
+        diagnosticsManager.error("WIFI", "No se pudo iniciar el punto de acceso");
+        return;
+    }
 
     apMode = true;
 
-    Serial.println();
-    Serial.println("=== ACCESS POINT ===");
-
-    Serial.print("SSID: ");
-    Serial.println("Ampercore_Setup");
-
-    Serial.print("IP: ");
-    Serial.println(
-        WiFi.softAPIP()
+    diagnosticsManager.info(
+        "WIFI",
+        "Punto de acceso Ampercore_Setup iniciado en " + WiFi.softAPIP().toString()
     );
 }
 
@@ -37,10 +40,7 @@ bool WifiManager::connectToWiFi(
     const String& password
 )
 {
-    Serial.println();
-    Serial.println(
-        "Conectando a WiFi..."
-    );
+    diagnosticsManager.info("WIFI", "Conectando a la red configurada");
 
     WiFi.mode(
         WIFI_STA
@@ -62,7 +62,6 @@ bool WifiManager::connectToWiFi(
         < 15000
     )
     {
-        Serial.print(".");
         delay(500);
     }
 
@@ -77,26 +76,15 @@ bool WifiManager::connectToWiFi(
 
         apMode = false;
 
-        Serial.println();
-        Serial.println(
-            "WiFi conectado"
-        );
-
-        Serial.print(
-            "IP: "
-        );
-
-        Serial.println(
-            WiFi.localIP()
+        diagnosticsManager.info(
+            "WIFI",
+            "WiFi conectado; IP: " + WiFi.localIP().toString()
         );
 
         return true;
     }
 
-    Serial.println();
-    Serial.println(
-        "Error de conexión"
-    );
+    diagnosticsManager.error("WIFI", "No se pudo conectar a la red configurada");
 
     return false;
 }
@@ -135,10 +123,8 @@ void WifiManager::reconnect()
         return;
     }
 
-    Serial.println(
-        "Reconectando..."
-    );
-
+    diagnosticsManager.incrementWifiReconnects();
+    diagnosticsManager.warning("WIFI", "Intentando reconectar WiFi");
     WiFi.reconnect();
 }
 

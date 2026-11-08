@@ -2,32 +2,52 @@
 #include "ConfigManager.h"
 #include "MQTTManager.h"
 #include "DeviceManager.h"
+#include "DiagnosticsManager.h"
 
 #include <WiFi.h>
 
 extern ConfigManager configManager;
 extern MQTTManager mqttManager;
 extern DeviceManager deviceManager;
+extern DiagnosticsManager diagnosticsManager;
 
 AsyncWebServer server(80);
 
 String cachedNetworks = "";
 std::vector<String> scannedNetworks;
+volatile bool networkScanRequested = false;
+
+void requestNetworkScan()
+{
+    networkScanRequested = true;
+}
+
+bool takeNetworkScanRequest()
+{
+    if(!networkScanRequested)
+    {
+        return false;
+    }
+
+    networkScanRequested = false;
+    return true;
+}
 
 void scanNetworks()
 {
     scannedNetworks.clear();
 
-    Serial.println("Escaneando redes...");
+    diagnosticsManager.info("WIFI", "Escaneo de redes iniciado");
 
     String tempNetworks = "";
 
     int count = WiFi.scanNetworks();
 
-    Serial.printf(
-        "Redes encontradas: %d\n",
-        count
-    );
+    if(count < 0)
+    {
+        diagnosticsManager.error("WIFI", "Fallo al escanear redes WiFi");
+        return;
+    }
 
     for (int i = 0; i < count; i++)
     {
@@ -44,8 +64,12 @@ void scanNetworks()
             ssid +
             "</option>";
 
-        Serial.println(ssid);
     }
+
+    diagnosticsManager.info(
+        "WIFI",
+        "Redes encontradas: " + String(count)
+    );
 
     if (tempNetworks.length() == 0)
     {
@@ -63,10 +87,6 @@ void WebPortal::begin()
         HTTP_GET,
         [](AsyncWebServerRequest *request)
         {
-            Serial.println(
-                "Pagina principal solicitada"
-            );
-
             uint64_t chipid =
                 ESP.getEfuseMac();
 
@@ -242,6 +262,22 @@ Próximamente disponible
 
 <div class="card">
 
+<h2>Control de Dispositivos</h2>
+
+<p>
+Funciones disponibles:
+</p>
+
+<ul>
+<li>Encender</li>
+<li>Apagar</li>
+<li>Reiniciar</li>
+</ul>
+
+</div>
+
+<div class="card">
+
 <h2>Configuración WiFi</h2>
 
 <form action="/save" method="GET">
@@ -377,13 +413,28 @@ Próximamente disponible
         HTTP_GET,
         [](AsyncWebServerRequest *request)
         {
-            Serial.println(
-                "Escaneo manual solicitado"
+            diagnosticsManager.info("WEB", "Escaneo manual de redes solicitado");
+
+            requestNetworkScan();
+
+            request->send(
+                200,
+                "text/html",
+                R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="8;url=/">
+<title>Escaneando redes</title>
+</head>
+<body>
+<p>Escaneo WiFi iniciado. La página se actualizará en unos segundos.</p>
+<p><a href="/">Volver al portal</a></p>
+</body>
+</html>
+)rawliteral"
             );
-
-            scanNetworks();
-
-            request->redirect("/");
         });
 
     server.on(
@@ -456,7 +507,5 @@ Reiniciando dispositivo...
 
     server.begin();
 
-    Serial.println(
-        "Portal web iniciado"
-    );
+    diagnosticsManager.info("WEB", "Portal web iniciado");
 }
