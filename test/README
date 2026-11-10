@@ -1,21 +1,11 @@
+# Tests
 
-# Ampercore Hub
+This directory is reserved for PlatformIO tests. No automated test cases are currently present.
 
-Firmware del gateway IoT de Ampercore.
+Build the firmware from the repository root with:
 
-## Objetivos
+```sh
+pio run -e esp32dev
+```
 
-- Gestión energética residencial
-- Portal cautivo de configuración
-- MQTT
-- API REST local
-- Simulación de dispositivos inteligentes
-- Integración ESP32
-
-## Hardware
-
-- ESP32 Dev Module
-
-## Estado
-
-Versión inicial funcionando en PlatformIO.
+See the root [README](../README.md) for build and flash instructions.
